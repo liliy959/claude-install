@@ -39,6 +39,71 @@ if ($IsWindows -or ($env:OS -eq "Windows_NT")) {
     exit 1
 }
 
+# ---- Auto-detect proxy ----
+Write-Host ""
+Write-Host "[0/3] Auto-detecting proxy..." -ForegroundColor Yellow
+
+$PROXY_CANDIDATES = @(
+    $null,                              # direct connection first
+    "http://127.0.0.1:7890",           # Clash default
+    "http://127.0.0.1:7897",
+    "http://127.0.0.1:10809",          # v2rayN default
+    "http://127.0.0.1:1080",
+    "http://127.0.0.1:8080"
+)
+
+# Also check env vars
+if ($env:HTTP_PROXY)  { $PROXY_CANDIDATES = @($env:HTTP_PROXY) + $PROXY_CANDIDATES }
+if ($env:HTTPS_PROXY) { $PROXY_CANDIDATES = @($env:HTTPS_PROXY) + $PROXY_CANDIDATES }
+
+function Test-Proxy {
+    param([string]$ProxyUri)
+    $testUrl = "https://api.github.com"
+    try {
+        $req = [System.Net.WebRequest]::Create($testUrl)
+        $req.Timeout = 5000
+        if ($ProxyUri) {
+            $req.Proxy = [System.Net.WebProxy]::new($ProxyUri)
+        } else {
+            $req.Proxy = [System.Net.WebRequest]::GetSystemWebProxy()
+        }
+        $resp = $req.GetResponse()
+        $resp.Close()
+        return $true
+    } catch { }
+    return $false
+}
+
+$USE_PROXY = $null
+$found = $false
+foreach ($candidate in $PROXY_CANDIDATES) {
+    if ($candidate) {
+        Write-Host "  Trying $candidate ..." -ForegroundColor Gray
+    } else {
+        Write-Host "  Trying direct connection ..." -ForegroundColor Gray
+    }
+    if (Test-Proxy -ProxyUri $candidate) {
+        $USE_PROXY = $candidate
+        $found = $true
+        break
+    }
+}
+
+if (-not $found) {
+    Write-Host "[ERROR] Cannot reach GitHub. Please check your network or proxy." -ForegroundColor Red
+    Write-Host "  If you have a proxy, set it first and retry:" -ForegroundColor DarkYellow
+    Write-Host "  `$env:HTTPS_PROXY='http://127.0.0.1:YOUR_PORT'; irm https://liliy959.github.io/claude-install/cc.ps1 | iex" -ForegroundColor DarkYellow
+    exit 1
+}
+
+if ($USE_PROXY) {
+    Write-Host "  [OK] Using proxy: $USE_PROXY" -ForegroundColor Green
+    $env:HTTP_PROXY = $USE_PROXY
+    $env:HTTPS_PROXY = $USE_PROXY
+} else {
+    Write-Host "  [OK] Direct connection works" -ForegroundColor Green
+}
+
 # ---- Step 1: Fetch latest version info ----
 Write-Host ""
 Write-Host "[1/3] Fetching latest version..." -ForegroundColor Yellow
@@ -50,7 +115,6 @@ try {
     Write-Host "  -> Latest: $version" -ForegroundColor Green
 } catch {
     Write-Host "[ERROR] Cannot reach GitHub API. Check your network or proxy." -ForegroundColor Red
-    Write-Host "  Tip: set HTTP_PROXY=http://127.0.0.1:7890" -ForegroundColor DarkYellow
     exit 1
 }
 
